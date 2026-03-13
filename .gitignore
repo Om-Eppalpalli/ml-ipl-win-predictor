@@ -1,0 +1,21 @@
+# ── Dataset (download from Kaggle via kagglehub) ──────────────────────────────
+ball_by_ball_ipl.csv
+
+# ── Generated model artifacts (recreated by running IPL_Win_Predictor.ipynb) ──
+artifacts/
+app/artifacts/
+
+# ── Working/draft notebook (final version is IPL_Win_Predictor.ipynb) ─────────
+cricket.ipynb
+
+# ── Generated images ──────────────────────────────────────────────────────────
+*.png
+*.jpg
+
+# ── Python cache ──────────────────────────────────────────────────────────────
+__pycache__/
+app/__pycache__/
+*.py[cod]
+
+# ── Jupyter checkpoints ───────────────────────────────────────────────────────
+.ipynb_checkpoints/
