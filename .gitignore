@@ -1,9 +1,11 @@
 # ── Dataset (download from Kaggle via kagglehub) ──────────────────────────────
 ball_by_ball_ipl.csv
 
-# ── Generated model artifacts (recreated by running IPL_Win_Predictor.ipynb) ──
+# ── Root artifacts folder (not needed for app) ────────────────────────────────
 artifacts/
-app/artifacts/
+
+# ── Keep app/artifacts/ tracked — Streamlit Cloud needs these to run the app ──
+# app/artifacts/
 
 # ── Working/draft notebook (final version is IPL_Win_Predictor.ipynb) ─────────
 cricket.ipynb
