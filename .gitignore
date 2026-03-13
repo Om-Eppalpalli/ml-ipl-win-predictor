@@ -2,10 +2,7 @@
 ball_by_ball_ipl.csv
 
 # ── Root artifacts folder (not needed for app) ────────────────────────────────
-artifacts/
-
-# ── Keep app/artifacts/ tracked — Streamlit Cloud needs these to run the app ──
-# app/artifacts/
+/artifacts/
 
 # ── Working/draft notebook (final version is IPL_Win_Predictor.ipynb) ─────────
 cricket.ipynb
