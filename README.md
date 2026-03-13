@@ -11,7 +11,7 @@ A machine learning project that predicts the **win probability of the chasing te
 | Scenario | Prediction |
 |---|---|
 | MI need 30 off 30, 6 wkts, Rohit batting | ~97% MI win |
-| RCB need 75 off 42, 6 wkts, Kohli + AB | ~38% RCB win |
+| RCB need 75 off 32, 6 wkts, Kohli + AB | ~38% RCB win |
 | CSK need 12 off 1 ball | ~0% CSK win |
 
 ---
