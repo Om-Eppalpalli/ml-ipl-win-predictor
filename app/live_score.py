@@ -8,8 +8,8 @@ import requests
 API_BASE = "https://api.cricapi.com/v1"
 
 
-def fetch_live_matches(api_key: str) -> list[dict]:
-    """Return list of current/recent cricket matches."""
+def fetch_live_matches(api_key: str) -> tuple[list[dict], str]:
+    """Return (matches_list, error_message). Error is empty string on success."""
     try:
         resp = requests.get(
             f"{API_BASE}/currentMatches",
@@ -18,14 +18,17 @@ def fetch_live_matches(api_key: str) -> list[dict]:
         )
         data = resp.json()
         if data.get("status") != "success":
-            return []
-        return data.get("data", [])
-    except Exception:
-        return []
+            info = data.get("info", "")
+            if "limit" in info.lower() or "credit" in info.lower():
+                return [], f"API daily limit reached ({info}). Free tier allows 100 requests/day. Resets at midnight UTC."
+            return [], data.get("info", "API returned an error.")
+        return data.get("data", []), ""
+    except Exception as e:
+        return [], f"Network error: {e}"
 
 
-def fetch_match_scorecard(api_key: str, match_id: str) -> dict | None:
-    """Return scorecard for a specific match."""
+def fetch_match_scorecard(api_key: str, match_id: str) -> tuple[dict | None, str]:
+    """Return (scorecard_dict, error_message). Error is empty string on success."""
     try:
         resp = requests.get(
             f"{API_BASE}/match_scorecard",
@@ -34,14 +37,17 @@ def fetch_match_scorecard(api_key: str, match_id: str) -> dict | None:
         )
         data = resp.json()
         if data.get("status") != "success":
-            return None
-        return data.get("data", {})
-    except Exception:
-        return None
+            info = data.get("info", "")
+            if "limit" in info.lower() or "credit" in info.lower():
+                return None, f"API daily limit reached ({info}). Free tier allows 100 requests/day. Resets at midnight UTC."
+            return None, data.get("info", "API returned an error.")
+        return data.get("data", {}), ""
+    except Exception as e:
+        return None, f"Network error: {e}"
 
 
-def fetch_match_info(api_key: str, match_id: str) -> dict | None:
-    """Return match info (venue, teams, toss, etc.)."""
+def fetch_match_info(api_key: str, match_id: str) -> tuple[dict | None, str]:
+    """Return (match_info_dict, error_message). Error is empty string on success."""
     try:
         resp = requests.get(
             f"{API_BASE}/match_info",
@@ -50,10 +56,13 @@ def fetch_match_info(api_key: str, match_id: str) -> dict | None:
         )
         data = resp.json()
         if data.get("status") != "success":
-            return None
-        return data.get("data", {})
-    except Exception:
-        return None
+            info = data.get("info", "")
+            if "limit" in info.lower() or "credit" in info.lower():
+                return None, f"API daily limit reached ({info}). Free tier allows 100 requests/day. Resets at midnight UTC."
+            return None, data.get("info", "API returned an error.")
+        return data.get("data", {}), ""
+    except Exception as e:
+        return None, f"Network error: {e}"
 
 
 def parse_live_data(scorecard: dict) -> dict:

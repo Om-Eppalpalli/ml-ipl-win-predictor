@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 from prediction_helper import predict, TEAMS, BATTERS, BOWLERS, VENUES
 from live_score import fetch_live_matches, fetch_match_scorecard, parse_live_data
@@ -12,33 +13,46 @@ st.divider()
 live_data = {}
 
 API_KEY = "8466f49f-1334-4c8b-aab3-d4db2be92632"
+CACHE_TTL = 120  # seconds — don't re-fetch within 2 minutes
 
 with st.expander("📡 Fetch Live Match Data (Optional)", expanded=False):
-    st.caption("Auto-fill match info from a live game using CricAPI.")
+    st.caption("Auto-fill match info from a live game using CricAPI. "
+               "Data is cached for 2 minutes to save API credits (100/day limit).")
 
     if st.button("Fetch Live Matches"):
-        with st.spinner("Fetching live matches..."):
-            matches = fetch_live_matches(API_KEY)
-        if not matches:
-            st.warning("No live matches found or API error.")
+        # Check cache — skip API call if fresh data exists
+        last_fetch = st.session_state.get("matches_fetched_at", 0)
+        if time.time() - last_fetch < CACHE_TTL and "live_matches" in st.session_state:
+            remaining = CACHE_TTL - int(time.time() - last_fetch)
+            placeholder = st.empty()
+            placeholder.info(f"Using cached match list. Refreshable in {remaining}s...")
+            while remaining > 0:
+                time.sleep(1)
+                remaining -= 1
+                placeholder.info(f"Using cached match list. Refreshable in {remaining}s...")
+            placeholder.success("Cache expired! Click **Fetch Live Matches** again for fresh data.")
         else:
-            # Filter to T20/IPL matches that are in progress
-            live_matches = [
-                m for m in matches
-                if m.get("matchType", "") in ("t20", "T20")
-                and m.get("matchStarted", False)
-                and not m.get("matchEnded", False)
-            ]
-            if not live_matches:
-                live_matches = [m for m in matches if m.get("matchStarted", False)
-                                and not m.get("matchEnded", False)]
+            with st.spinner("Fetching live matches..."):
+                matches, err = fetch_live_matches(API_KEY)
+            if err:
+                st.error(f"API Error: {err}")
+            elif not matches:
+                st.warning("No live matches found.")
+            else:
+                # Filter to live IPL matches only (started + not ended)
+                live_matches = [
+                    m for m in matches
+                    if ("ipl" in m.get("name", "").lower()
+                        or "indian premier league" in m.get("name", "").lower())
+                    and m.get("matchStarted", False)
+                    and not m.get("matchEnded", False)
+                ]
+                if not live_matches:
+                    st.warning("No live IPL matches right now. Check back during a match.")
 
-            if not live_matches:
-                st.info("No in-progress matches found. Showing recent matches.")
-                live_matches = matches[:5]
-
-            st.session_state["live_matches"] = live_matches
-            st.rerun()  # show match dropdown immediately
+                st.session_state["live_matches"] = live_matches
+                st.session_state["matches_fetched_at"] = time.time()
+                st.rerun()
 
     if "live_matches" in st.session_state:
         match_options = {
@@ -49,15 +63,33 @@ with st.expander("📡 Fetch Live Match Data (Optional)", expanded=False):
 
         if selected and st.button("Load Match Data"):
             match_id = match_options[selected]
-            with st.spinner("Fetching scorecard..."):
-                scorecard = fetch_match_scorecard(API_KEY, match_id)
-            if scorecard:
-                live_data = parse_live_data(scorecard)
-                st.session_state["live_data"] = live_data
-                st.success("Match data loaded! Fields auto-filled below.")
-                st.rerun()  # force rerun so form fields pick up new values
+            # Check cache — skip if same match scorecard fetched recently
+            cached_id = st.session_state.get("scorecard_match_id")
+            last_sc_fetch = st.session_state.get("scorecard_fetched_at", 0)
+            if (match_id == cached_id
+                    and time.time() - last_sc_fetch < CACHE_TTL
+                    and "live_data" in st.session_state):
+                remaining = CACHE_TTL - int(time.time() - last_sc_fetch)
+                placeholder = st.empty()
+                placeholder.info(f"Using cached scorecard. Refreshable in {remaining}s...")
+                while remaining > 0:
+                    time.sleep(1)
+                    remaining -= 1
+                    placeholder.info(f"Using cached scorecard. Refreshable in {remaining}s...")
+                placeholder.success("Cache expired! Click **Load Match Data** again for fresh data.")
             else:
-                st.error("Could not fetch scorecard. Try again or enter data manually.")
+                with st.spinner("Fetching scorecard..."):
+                    scorecard, err = fetch_match_scorecard(API_KEY, match_id)
+                if err:
+                    st.error(f"API Error: {err}")
+                elif scorecard:
+                    live_data = parse_live_data(scorecard)
+                    st.session_state["live_data"] = live_data
+                    st.session_state["scorecard_match_id"] = match_id
+                    st.session_state["scorecard_fetched_at"] = time.time()
+                    st.rerun()
+                else:
+                    st.error("Could not fetch scorecard. Try again or enter data manually.")
 
     if "live_data" in st.session_state:
         live_data = st.session_state["live_data"]
