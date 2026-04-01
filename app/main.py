@@ -1,5 +1,6 @@
 import streamlit as st
 from prediction_helper import predict, TEAMS, BATTERS, BOWLERS, VENUES
+from live_score import fetch_live_matches, fetch_match_scorecard, parse_live_data
 
 st.set_page_config(page_title="Cricket Match Winner Prediction", page_icon="🏏", layout="wide")
 st.title("🏏 IPL Match Winner Prediction")
@@ -7,77 +8,206 @@ st.markdown("Live 2nd-innings win probability using career stats, Bayesian shrin
             "in-match form, partnership context, next batter, remaining bowlers, and venue factors.")
 st.divider()
 
-# ── Match Setup ────────────────────────────────────────────────────────────────
+# ── Live Score Integration ────────────────────────────────────────────────────
+live_data = {}
+
+API_KEY = "8466f49f-1334-4c8b-aab3-d4db2be92632"
+
+with st.expander("📡 Fetch Live Match Data (Optional)", expanded=False):
+    st.caption("Auto-fill match info from a live game using CricAPI.")
+
+    if st.button("Fetch Live Matches"):
+        with st.spinner("Fetching live matches..."):
+            matches = fetch_live_matches(API_KEY)
+        if not matches:
+            st.warning("No live matches found or API error.")
+        else:
+            # Filter to T20/IPL matches that are in progress
+            live_matches = [
+                m for m in matches
+                if m.get("matchType", "") in ("t20", "T20")
+                and m.get("matchStarted", False)
+                and not m.get("matchEnded", False)
+            ]
+            if not live_matches:
+                live_matches = [m for m in matches if m.get("matchStarted", False)
+                                and not m.get("matchEnded", False)]
+
+            if not live_matches:
+                st.info("No in-progress matches found. Showing recent matches.")
+                live_matches = matches[:5]
+
+            st.session_state["live_matches"] = live_matches
+            st.rerun()  # show match dropdown immediately
+
+    if "live_matches" in st.session_state:
+        match_options = {
+            f"{m.get('name', 'Unknown')} — {m.get('status', '')}": m.get("id", "")
+            for m in st.session_state["live_matches"]
+        }
+        selected = st.selectbox("Select Match", list(match_options.keys()))
+
+        if selected and st.button("Load Match Data"):
+            match_id = match_options[selected]
+            with st.spinner("Fetching scorecard..."):
+                scorecard = fetch_match_scorecard(API_KEY, match_id)
+            if scorecard:
+                live_data = parse_live_data(scorecard)
+                st.session_state["live_data"] = live_data
+                st.success("Match data loaded! Fields auto-filled below.")
+                st.rerun()  # force rerun so form fields pick up new values
+            else:
+                st.error("Could not fetch scorecard. Try again or enter data manually.")
+
+    if "live_data" in st.session_state:
+        live_data = st.session_state["live_data"]
+        ld = live_data
+        if ld.get("innings") == 1:
+            st.warning(
+                f"🏏 **1st Innings in progress** — {ld.get('team_bowling','-')} batting\n\n"
+                f"Score: **{ld.get('first_innings_score',0)}/{ld.get('first_innings_wickets',0)}** "
+                f"({ld.get('first_innings_overs','0')} ov)\n\n"
+                f"Chasing team: **{ld.get('team_batting','-')}** | Venue: {ld.get('venue','-')}\n\n"
+                f"Prediction will be available once 2nd innings starts. "
+                f"Click **Load Match Data** again after innings break."
+            )
+        else:
+            st.info(
+                f"Loaded: **{ld.get('team_batting','-')}** chasing vs {ld.get('team_bowling','-')} | "
+                f"Score: {ld.get('innings_runs',0)}/{ld.get('wickets_fallen',0)} | "
+                f"Target: {ld.get('target',0)} | Venue: {ld.get('venue','-')} | "
+                f"Batters: {ld.get('current_batters',[])} | Bowler: {ld.get('current_bowler','-')}"
+            )
+
+# ── Helper: match live names to our dropdown lists ────────────────────────────
+def _find_closest(name: str, options: list[str]) -> int:
+    """Find the best matching index in options for a player/team/venue name."""
+    if not name:
+        return 0
+    name_lower = name.lower()
+    # Exact match
+    for i, opt in enumerate(options):
+        if opt.lower() == name_lower:
+            return i
+    # Partial match (last name or substring)
+    parts = name_lower.split()
+    for i, opt in enumerate(options):
+        opt_lower = opt.lower()
+        for part in parts:
+            if len(part) > 2 and part in opt_lower:
+                return i
+    return 0
+
+# ── Defaults from live data ───────────────────────────────────────────────────
+def_team   = _find_closest(live_data.get("team_batting", ""), sorted(TEAMS))
+def_venue  = _find_closest(live_data.get("venue", ""), VENUES)
+def_target = live_data.get("target", 170) or 170
+def_runs   = live_data.get("innings_runs", 80) or 80
+def_balls  = live_data.get("balls_remaining", 60) or 60
+def_wkts   = live_data.get("wickets_fallen", 2) or 2
+
+# Player defaults from live data
+live_batters = live_data.get("current_batters", [])
+def_striker = _find_closest(live_batters[0] if len(live_batters) > 0 else "", BATTERS)
+def_ns      = _find_closest(live_batters[1] if len(live_batters) > 1 else "", BATTERS)
+def_bowler  = _find_closest(live_data.get("current_bowler", ""), BOWLERS)
+def_bowl_balls = live_data.get("bowler_match_balls", 0) or 0
+def_bowl_runs  = live_data.get("bowler_match_runs", 0) or 0
+
+# Fallback defaults if no live data
+if not live_data:
+    def_striker = BATTERS.index('MS Dhoni') if 'MS Dhoni' in BATTERS else 0
+    def_ns      = BATTERS.index('SR Watson') if 'SR Watson' in BATTERS else 1
+    def_bowler  = BOWLERS.index('JJ Bumrah') if 'JJ Bumrah' in BOWLERS else 0
+
+# ── Auto-fill guide ───────────────────────────────────────────────────────────
+_live = bool(live_data and live_data.get("innings") == 2)
+_auto = " :green[Auto-filled]" if _live else ""
+_manual = " :orange[Update manually]" if _live else ""
+
+if _live:
+    st.info("**Auto-filled fields** are marked :green[green]. "
+            "Fields marked :orange[orange] need your manual input.")
+
+# ── Match Setup ───────────────────────────────────────────────────────────────
 st.subheader("Match Setup")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    bat_second   = st.selectbox("Chasing Team", sorted(TEAMS))
+    bat_second   = st.selectbox(f"Chasing Team{_auto}", sorted(TEAMS), index=def_team)
 with col2:
-    venue        = st.selectbox("Venue", VENUES)
+    venue        = st.selectbox(f"Venue{_auto}", VENUES, index=def_venue)
 with col3:
-    target_score = st.number_input("Target Score", min_value=50, max_value=300, value=170, step=1)
+    target_score = st.number_input(f"Target Score{_auto}", min_value=50, max_value=300,
+                                   value=min(max(def_target, 50), 300), step=1)
 with col4:
-    innings_runs = st.number_input("Current Score", min_value=0, max_value=299, value=80, step=1)
+    innings_runs = st.number_input(f"Current Score{_auto}", min_value=0, max_value=299,
+                                   value=min(max(def_runs, 0), 299), step=1)
 
-# ── Current Situation ──────────────────────────────────────────────────────────
+# ── Current Situation ─────────────────────────────────────────────────────────
 st.subheader("Current Situation")
 col5, col6 = st.columns(2)
 with col5:
-    balls_remaining = st.number_input("Balls Remaining", min_value=1, max_value=119, value=60, step=1)
+    balls_remaining = st.number_input(f"Balls Remaining{_auto}", min_value=1, max_value=119,
+                                      value=min(max(def_balls, 1), 119), step=1)
 with col6:
-    wickets_fallen  = st.number_input("Wickets Fallen", min_value=0, max_value=9, value=2, step=1)
+    wickets_fallen  = st.number_input(f"Wickets Fallen{_auto}", min_value=0, max_value=9,
+                                      value=min(max(def_wkts, 0), 9), step=1)
 
-# ── Players at the Crease ──────────────────────────────────────────────────────
+# ── Players at the Crease ────────────────────────────────────────────────────
 st.subheader("Batting — Players at the Crease")
 st.caption("Career stats loaded automatically using Bayesian shrinkage.")
+_batter_tag = _auto if (_live and live_data.get("current_batters")) else _manual
 col7, col8, col9 = st.columns(3)
 with col7:
-    default_batter = BATTERS.index('MS Dhoni') if 'MS Dhoni' in BATTERS else 0
-    batter_name    = st.selectbox("Striker", BATTERS, index=default_batter)
+    batter_name    = st.selectbox(f"Striker{_batter_tag}", BATTERS, index=def_striker)
 with col8:
-    default_ns = BATTERS.index('SR Watson') if 'SR Watson' in BATTERS else 1
-    non_striker = st.selectbox("Non-Striker", BATTERS, index=default_ns)
+    non_striker = st.selectbox(f"Non-Striker{_batter_tag}", BATTERS, index=def_ns)
 with col9:
-    default_next = BATTERS.index('AB de Villiers') if 'AB de Villiers' in BATTERS else 2
-    next_batter  = st.selectbox("Next Batter (Coming In)", BATTERS, index=default_next)
+    default_next_idx = BATTERS.index('AB de Villiers') if 'AB de Villiers' in BATTERS else 2
+    next_batter  = st.selectbox(f"Next Batter (Coming In){_manual}", BATTERS, index=default_next_idx)
 
-# ── Bowling ────────────────────────────────────────────────────────────────────
+# ── Bowling ───────────────────────────────────────────────────────────────────
 st.subheader("Bowling")
+_bowler_tag = _auto if (_live and live_data.get("current_bowler")) else _manual
 bcol1, bcol2 = st.columns(2)
 with bcol1:
-    default_bowler = BOWLERS.index('JJ Bumrah') if 'JJ Bumrah' in BOWLERS else 0
-    bowler_name    = st.selectbox("Current Bowler", BOWLERS, index=default_bowler)
+    bowler_name    = st.selectbox(f"Current Bowler{_bowler_tag}", BOWLERS, index=def_bowler)
 with bcol2:
     remaining_bowlers = st.multiselect(
-        "Remaining Bowlers (still have overs left)",
+        f"Remaining Bowlers (still have overs left){_manual}",
         options=BOWLERS,
         help="Select all bowlers who still have overs left to bowl (excluding current bowler). "
              "Their career economy is averaged to estimate bowling strength remaining."
     )
 
 st.caption("Bowler's performance this match — set balls to 0 to use career stats only.")
+_bowl_match_tag = _auto if (_live and live_data.get("bowler_match_balls", 0) > 0) else _manual
 bc1, bc2 = st.columns(2)
 with bc1:
-    bowler_match_balls = st.slider("Bowler Balls Bowled This Match", 0, 24, 0)
+    bowler_match_balls = st.slider(f"Bowler Balls Bowled This Match{_bowl_match_tag}", 0, 24,
+                                   min(def_bowl_balls, 24))
 with bc2:
-    bowler_match_runs  = st.slider("Bowler Runs Conceded This Match", 0, 72, 0)
+    bowler_match_runs  = st.slider(f"Bowler Runs Conceded This Match{_bowl_match_tag}", 0, 72,
+                                   min(def_bowl_runs, 72))
 
-# ── Momentum ───────────────────────────────────────────────────────────────────
-st.subheader("Recent Momentum (Last 12 Balls)")
+# ── Momentum ──────────────────────────────────────────────────────────────────
+st.subheader(f"Recent Momentum (Last 12 Balls)")
+if _live:
+    st.caption(":orange[These fields are NOT available from the API — update manually from the live broadcast.]")
 mc1, mc2, mc3 = st.columns(3)
 with mc1:
-    recent_runs    = st.slider("Runs Scored", 0, 60, 14)
+    recent_runs    = st.slider(f"Runs Scored{_manual}", 0, 60, 14)
 with mc2:
-    dot_count      = st.slider("Dot Balls", 0, 12, 4)
+    dot_count      = st.slider(f"Dot Balls{_manual}", 0, 12, 4)
 with mc3:
-    boundary_count = st.slider("Boundaries (4s + 6s)", 0, 12, 2)
+    boundary_count = st.slider(f"Boundaries (4s + 6s){_manual}", 0, 12, 2)
 
-# ── Partnership ────────────────────────────────────────────────────────────────
+# ── Partnership ───────────────────────────────────────────────────────────────
 st.subheader("Current Partnership")
-partnership_runs = st.number_input("Partnership Runs (since last wicket)",
+partnership_runs = st.number_input(f"Partnership Runs (since last wicket){_manual}",
                                     min_value=0, max_value=200, value=20, step=1)
 
-# ── Live Stats ─────────────────────────────────────────────────────────────────
+# ── Live Stats ────────────────────────────────────────────────────────────────
 runs_to_get  = target_score - innings_runs
 overs_bowled = round((120 - balls_remaining) / 6, 1)
 crr_display  = round(innings_runs / (overs_bowled if overs_bowled > 0 else 0.1), 2)
@@ -93,7 +223,7 @@ m4.metric("Required RR",  rrr_display)
 
 st.divider()
 
-# ── Predict ────────────────────────────────────────────────────────────────────
+# ── Predict ───────────────────────────────────────────────────────────────────
 if st.button("Predict Win Probability", type="primary"):
     if innings_runs >= target_score:
         st.error("Current score already equals or exceeds target — match is over!")
